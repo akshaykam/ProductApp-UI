@@ -1,0 +1,30 @@
+name: Build & Deploy UI
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build & Push Docker Image
+        run: |
+          IMAGE_URI=543816070942.dkr.ecr.us-east-1.amazonaws.com/product-ui:latest
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+
+      - name: Update Helm Values in GitOps Repo
+        run: |
+          git clone https://github.com/akshaykam/Terraform-Infra.git
+          cd ops-gitops
+          sed -i 's/tag: .*/tag: "latest"/' ../helm-charts/product-ui/values.yaml
+          git config user.email "ci@github.com"
+          git config user.name "github-actions"
+          git commit -am "Update UI image tag"
+          git push
