@@ -1,30 +1,51 @@
-name: Build & Deploy UI
+name: Build and Push UI
 
 on:
   push:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::543816070942:role/GitHubActionsOIDCRole-productapp
+          aws-region: us-east-1
 
       - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Docker Image
+      - name: Build & Push
+        env:
+          IMAGE: 543816070942.dkr.ecr.us-east-1.amazonaws.com/productapp-ui
         run: |
-          IMAGE_URI=543816070942.dkr.ecr.us-east-1.amazonaws.com/product-ui:latest
-          docker build -t $IMAGE_URI .
-          docker push $IMAGE_URI
+          TAG=$(date +%Y%m%d%H%M%S)
+          docker build --build-arg REACT_APP_API_BASE=/api -t $IMAGE:$TAG .
+          docker push $IMAGE:$TAG
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Update Helm Values in GitOps Repo
+      - name: Update ops-gitops repo
+        env:
+          OPS_REPO: "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository_owner }}/Terraform-Infra.git"
         run: |
-          git clone https://github.com/akshaykam/Terraform-Infra.git
-          cd ops-gitops
-          sed -i 's/tag: .*/tag: "latest"/' ../helm-charts/product-ui/values.yaml
-          git config user.email "ci@github.com"
-          git config user.name "github-actions"
-          git commit -am "Update UI image tag"
-          git push
+          git config --global user.email "ci@github"
+          git config --global user.name "ci"
+          git clone $OPS_REPO ops
+          cd ops
+          git checkout -b bump-ui-${TAG}
+          yq -i ".image.tag = \"${TAG}\"" envs/prod/productapp-ui-values.yaml
+          git add envs/prod/productapp-ui-values.yaml
+          git commit -m "chore(ui): bump image to ${TAG}"
+          git push origin bump-ui-${TAG}
+          gh pr create --title "chore(ui): bump image to ${TAG}" --body "Automated bump" --base main --head bump-ui-${TAG}
