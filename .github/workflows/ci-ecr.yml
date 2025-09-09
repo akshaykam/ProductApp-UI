@@ -1,0 +1,41 @@
+name: Build and Push UI to ECR
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubOIDCRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: ECR login
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ secrets.ECR_UI_REPO }}:latest
+            ${{ steps.ecr.outputs.registry }}/${{ secrets.ECR_UI_REPO }}:${{ github.sha }}
+
+      - name: Output image
+        run: echo "image=${{ steps.ecr.outputs.registry }}/${{ secrets.ECR_UI_REPO }}:${{ github.sha }}" >> $GITHUB_OUTPUT
